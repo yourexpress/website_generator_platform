@@ -1,0 +1,17 @@
+.DS_Store
+node_modules/
+dist/
+build/
+.env
+.env.local
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+backend/.env
+frontend/.env
+backend/data/*.db
+backend/storage/uploads/*
+backend/storage/exports/*
+!backend/storage/uploads/.gitkeep
+!backend/storage/exports/.gitkeep
