@@ -125,9 +125,22 @@ def test_assistant_chat_auto_generates_preview() -> None:
     assert body["requirement_version"]["brief"]["project_name"] == "Bluehaven Labs"
     assert len(body["design_version"]["design"]["pages"]) >= 1
 
+    second_response = client.post(
+        f"/api/projects/{project_id}/assistant/chat",
+        json={
+            "selection": {"provider": "gemini"},
+            "message": "Keep testimonials and pricing, and make the tone feel premium but calm for hospital operators.",
+            "site_type": "brochure",
+            "preferred_page_count": 2,
+            "uploaded_asset_ids": [],
+        },
+    )
+    assert second_response.status_code == 200
+
     project_detail = client.get(f"/api/projects/{project_id}")
     assert project_detail.status_code == 200
     detail = project_detail.json()
-    assert len(detail["assistant_messages"]) == 2
-    assert len(detail["requirement_versions"]) == 1
-    assert len(detail["design_versions"]) == 1
+    assert len(detail["assistant_messages"]) == 4
+    assert len(detail["requirement_versions"]) == 2
+    assert len(detail["design_versions"]) == 2
+    assert detail["requirement_versions"][0]["source_input"]["preferred_page_count"] == 2

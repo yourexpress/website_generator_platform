@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import {
   approveDesign,
@@ -12,14 +12,13 @@ import {
   uploadAssets,
 } from "../lib/api";
 import { DesignPreview } from "../components/DesignPreview";
-import { SectionCard } from "../components/SectionCard";
 import { AssistantMessage, ImageSuggestion, ProjectDetail, ProviderCatalogItem, RequirementInput } from "../lib/types";
 
 const INTRO_MESSAGE: AssistantMessage = {
   id: "intro",
   role: "assistant",
   content:
-    "Describe the website you want in natural language. After each message, I will refresh the requirement brief and generate a new design preview automatically.",
+    "Describe the site in plain language. I keep the current project session context, polish the brief, and try to satisfy every concrete requirement without dropping points.",
   created_at: new Date(0).toISOString(),
 };
 
@@ -35,6 +34,7 @@ export function WorkspacePage() {
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
+  const threadRef = useRef<HTMLDivElement | null>(null);
 
   const selectedProviderConfig = useMemo(
     () => providers.find((provider) => provider.name === selectedProvider),
@@ -74,6 +74,13 @@ export function WorkspacePage() {
       }
     }
   }, [project]);
+
+  useEffect(() => {
+    if (!threadRef.current) {
+      return;
+    }
+    threadRef.current.scrollTop = threadRef.current.scrollHeight;
+  }, [project?.assistant_messages.length]);
 
   async function withAction<T>(label: string, task: () => Promise<T>) {
     setBusyAction(label);
@@ -166,19 +173,19 @@ export function WorkspacePage() {
   const conversation = project.assistant_messages.length ? project.assistant_messages : [INTRO_MESSAGE];
 
   return (
-    <main className="app-shell workspace-shell">
-      <header className="topbar">
+    <main className="chat-app-shell">
+      <header className="workspace-topbar panel">
         <div>
-          <div className="panel-kicker">Project Workspace</div>
+          <div className="panel-kicker">Session Workspace</div>
           <h1>{project.name}</h1>
-          <p className="topbar-subtitle">{project.summary || "No summary yet"}</p>
+          <p className="topbar-subtitle">{project.summary || "Interactive AI website generation workspace"}</p>
         </div>
-        <div className="toolbar">
+        <div className="workspace-topbar-actions">
           <Link className="button ghost" to="/">
-            Back to projects
+            All projects
           </Link>
-          <label className="provider-select">
-            Active provider
+          <label className="provider-select compact-control">
+            Model provider
             <select value={selectedProvider} onChange={(event) => setSelectedProvider(event.target.value as typeof selectedProvider)}>
               {providers.map((provider) => (
                 <option key={provider.name} value={provider.name}>
@@ -190,218 +197,198 @@ export function WorkspacePage() {
         </div>
       </header>
 
-      {error ? <p className="error-text">{error}</p> : null}
+      {error ? <p className="error-text workspace-error">{error}</p> : null}
 
-      <div className="workspace-grid">
-        <SectionCard
-          step="Step 1"
-          title="AI Briefing"
-          description="Talk to the assistant in natural language. Each new prompt refreshes the requirement brief and regenerates the design preview automatically."
-        >
-          <div className="panel inset-panel">
+      <div className="workspace-chat-layout">
+        <aside className="workspace-sidebar panel">
+          <div className="sidebar-section">
+            <div className="panel-kicker">Session Context</div>
+            <p>The assistant keeps the full project conversation context and regenerates the latest brief and preview after each message.</p>
+          </div>
+
+          <div className="sidebar-section">
+            <label className="compact-control">
+              Site type
+              <select value={siteType} onChange={(event) => setSiteType(event.target.value as RequirementInput["site_type"])}>
+                <option value="brochure">Brochure</option>
+                <option value="landing">Landing</option>
+                <option value="campaign">Campaign</option>
+                <option value="portfolio">Portfolio</option>
+              </select>
+            </label>
+            <label className="compact-control">
+              Page count
+              <input
+                type="number"
+                min={1}
+                max={5}
+                value={preferredPageCount}
+                onChange={(event) => setPreferredPageCount(Number(event.target.value) || 1)}
+              />
+            </label>
+          </div>
+
+          <div className="sidebar-section">
             <form className="stack-form" onSubmit={handleUpload}>
-              <label>
-                Upload images
+              <label className="compact-control">
+                Upload reference images
                 <input type="file" name="assets" accept="image/*" multiple />
               </label>
               <button className="button secondary" type="submit" disabled={busyAction === "upload"}>
-                {busyAction === "upload" ? "Uploading..." : "Upload assets"}
+                {busyAction === "upload" ? "Uploading..." : "Upload"}
               </button>
             </form>
             <div className="token-list">
               {project.assets.map((asset) => (
-                <span key={asset.id} className="token">
+                <button
+                  key={asset.id}
+                  className={`toggle-chip ${selectedAssetIds.includes(asset.id) ? "is-active" : ""}`}
+                  type="button"
+                  onClick={() =>
+                    setSelectedAssetIds((current) =>
+                      current.includes(asset.id) ? current.filter((value) => value !== asset.id) : [...current, asset.id],
+                    )
+                  }
+                >
                   {asset.filename}
-                </span>
+                </button>
               ))}
             </div>
-          </div>
-
-          <div className="panel inset-panel">
-            <div className="chat-toolbar">
-              <label>
-                Site type
-                <select value={siteType} onChange={(event) => setSiteType(event.target.value as RequirementInput["site_type"])}>
-                  <option value="brochure">Brochure</option>
-                  <option value="landing">Landing</option>
-                  <option value="campaign">Campaign</option>
-                  <option value="portfolio">Portfolio</option>
-                </select>
-              </label>
-              <label>
-                Page count
-                <input
-                  type="number"
-                  min={1}
-                  max={5}
-                  value={preferredPageCount}
-                  onChange={(event) => setPreferredPageCount(Number(event.target.value) || 1)}
-                />
-              </label>
-            </div>
-
-            <div className="toggle-grid">
-              {project.assets.map((asset) => {
-                const selected = selectedAssetIds.includes(asset.id);
-                return (
-                  <button
-                    key={asset.id}
-                    className={`toggle-chip ${selected ? "is-active" : ""}`}
-                    type="button"
-                    onClick={() =>
-                      setSelectedAssetIds((current) =>
-                        selected ? current.filter((value) => value !== asset.id) : [...current, asset.id],
-                      )
-                    }
-                  >
-                    {asset.filename}
-                  </button>
-                );
-              })}
-            </div>
-
-            <div className="chat-thread">
-              {conversation.map((message) => (
-                <article key={message.id} className={`chat-bubble ${message.role}`}>
-                  <div className="panel-kicker">{message.role === "assistant" ? "AI" : "You"}</div>
-                  <p>{message.content}</p>
-                </article>
-              ))}
-            </div>
-
-            <form className="chat-compose" onSubmit={handleChatSubmit}>
-              <label className="full-span">
-                Message
-                <textarea
-                  value={chatInput}
-                  onChange={(event) => setChatInput(event.target.value)}
-                  placeholder="Describe the business, audience, brand feel, structure, and any must-have sections."
-                />
-              </label>
-              <button className="button primary" type="submit" disabled={!chatInput.trim() || busyAction === "assistant"}>
-                {busyAction === "assistant" ? "Generating preview..." : "Send prompt"}
-              </button>
-            </form>
           </div>
 
           {latestRequirement ? (
-            <div className="result-grid">
-              <div className="panel inset-panel">
-                <div className="row-between">
-                  <h3>Latest requirement brief</h3>
-                  <button className="button secondary" onClick={() => handleApproveRequirement(latestRequirement.id)}>
-                    {latestRequirement.approved ? "Approved" : "Approve brief"}
-                  </button>
-                </div>
-                <p>{latestRequirement.brief.business_context}</p>
-                <ul className="clean-list">
-                  {latestRequirement.brief.value_propositions.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-                <p className="meta-line">
-                  Version {latestRequirement.version_number} via {latestRequirement.provider} / {latestRequirement.model}
-                </p>
+            <div className="sidebar-section">
+              <div className="row-between">
+                <h3>Current brief</h3>
+                <button className="button secondary small-button" onClick={() => handleApproveRequirement(latestRequirement.id)}>
+                  {latestRequirement.approved ? "Approved" : "Approve"}
+                </button>
               </div>
-              <div className="panel inset-panel">
-                <h3>Open questions</h3>
-                <ul className="clean-list">
-                  {latestRequirement.brief.open_questions.map((item) => (
-                    <li key={item}>{item}</li>
-                  ))}
-                </ul>
-              </div>
+              <ul className="clean-list compact-list">
+                {latestRequirement.brief.value_propositions.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
             </div>
           ) : null}
-        </SectionCard>
 
-        <SectionCard
-          step="Step 2"
-          title="Design Preview"
-          description="The preview refreshes automatically after each prompt. Review the current direction, then approve the design when it is ready for code generation."
-        >
-          {latestDesign ? (
-            <div className="result-grid preview-grid">
-              <div className="panel inset-panel">
-                <div className="row-between">
-                  <h3>Current design direction</h3>
-                  <button className="button secondary" onClick={() => handleApproveDesign(latestDesign.id)}>
-                    {latestDesign.approved ? "Approved" : "Approve design"}
-                  </button>
-                </div>
-                <p>{latestDesign.design.visual_direction.mood}</p>
-                <ul className="clean-list">
+          {latestBuild ? (
+            <div className="sidebar-section">
+              <div className="panel-kicker">Latest Export</div>
+              <p>{latestBuild.manifest.pages.length} page static bundle ready.</p>
+              <a className="button secondary" href={buildDownloadUrl(project.id, latestBuild.id)}>
+                Download ZIP
+              </a>
+            </div>
+          ) : null}
+        </aside>
+
+        <section className="workspace-conversation panel">
+          <div className="conversation-header">
+            <div>
+              <div className="panel-kicker">AI Design Chat</div>
+              <h2>Describe. Refine. Iterate.</h2>
+            </div>
+            <p>The assistant polishes the brief but tries to preserve every concrete requirement from this session.</p>
+          </div>
+
+          <div className="chat-thread immersive-thread" ref={threadRef}>
+            {conversation.map((message) => (
+              <article key={message.id} className={`chat-bubble ${message.role}`}>
+                <div className="chat-bubble-meta">{message.role === "assistant" ? "AI strategist" : "You"}</div>
+                <p>{message.content}</p>
+              </article>
+            ))}
+          </div>
+
+          <form className="chat-compose docked-compose" onSubmit={handleChatSubmit}>
+            <label className="full-span">
+              Message
+              <textarea
+                value={chatInput}
+                onChange={(event) => setChatInput(event.target.value)}
+                placeholder="Example: Make it feel premium but warm, keep testimonials and pricing, use the uploaded product shots, and optimize the design for desktop, iPad, and phone."
+              />
+            </label>
+            <div className="compose-actions">
+              <span className="compose-hint">Session-aware. Requirement-preserving. Auto-previewing.</span>
+              <button className="button primary" type="submit" disabled={!chatInput.trim() || busyAction === "assistant"}>
+                {busyAction === "assistant" ? "Refreshing preview..." : "Send"}
+              </button>
+            </div>
+          </form>
+        </section>
+
+        <section className="workspace-preview-column">
+          <div className="workspace-preview panel">
+            <div className="preview-panel-header">
+              <div>
+                <div className="panel-kicker">Responsive Preview</div>
+                <h2>Live design surface</h2>
+              </div>
+              {latestDesign ? (
+                <button className="button secondary small-button" onClick={() => handleApproveDesign(latestDesign.id)}>
+                  {latestDesign.approved ? "Approved" : "Approve design"}
+                </button>
+              ) : null}
+            </div>
+
+            {latestDesign ? <DesignPreview design={latestDesign.design} /> : <p className="helper-text">Send a message to generate the first preview.</p>}
+          </div>
+
+          <div className="workspace-insights-grid">
+            <div className="panel insight-panel">
+              <div className="row-between">
+                <h3>Design coverage</h3>
+                <button className="button secondary small-button" type="button" disabled={busyAction === "suggestions"} onClick={handleLoadSuggestions}>
+                  {busyAction === "suggestions" ? "Loading..." : "Image ideas"}
+                </button>
+              </div>
+              {latestDesign ? (
+                <ul className="clean-list compact-list">
                   {latestDesign.design.pages.map((page) => (
                     <li key={page.slug}>
                       <strong>{page.title}</strong>: {page.sections.map((section) => section.name).join(", ")}
                     </li>
                   ))}
                 </ul>
-                <div className="row-between preview-actions">
-                  <button className="button secondary" type="button" disabled={busyAction === "suggestions"} onClick={handleLoadSuggestions}>
-                    {busyAction === "suggestions" ? "Loading..." : "Load image suggestions"}
-                  </button>
-                </div>
-              </div>
-
-              <div className="panel inset-panel">
-                <DesignPreview design={latestDesign.design} />
-              </div>
-
-              <div className="panel inset-panel">
-                <h3>Licensed image recommendations</h3>
-                {suggestions.length ? (
-                  <ul className="clean-list">
-                    {suggestions.map((suggestion) => (
-                      <li key={suggestion.url}>
-                        <a href={suggestion.url} target="_blank" rel="noreferrer">
-                          {suggestion.source_name}
-                        </a>
-                        <p>{suggestion.intended_use}</p>
-                        <small>{suggestion.licensing_note}</small>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p>No suggestions loaded yet.</p>
-                )}
-              </div>
+              ) : (
+                <p className="helper-text">No design generated yet.</p>
+              )}
             </div>
-          ) : (
-            <p className="helper-text">Start the AI conversation above to generate the first design preview.</p>
-          )}
-        </SectionCard>
 
-        <SectionCard
-          step="Step 3"
-          title="Build Studio"
-          description="Generate the static export bundle, keep version history, and download a ZIP when the build is complete."
-        >
-          <button className="button primary" type="button" disabled={!latestDesign || busyAction === "build"} onClick={handleGenerateBuild}>
-            {busyAction === "build" ? "Generating build..." : "Generate static site"}
-          </button>
-
-          {latestBuild ? (
-            <div className="result-grid">
-              <div className="panel inset-panel">
-                <h3>Latest build artifact</h3>
-                <p>
-                  Version {latestBuild.version_number} via {latestBuild.provider} / {latestBuild.model}
-                </p>
-                <ul className="clean-list">
-                  {latestBuild.manifest.files.map((file) => (
-                    <li key={file}>{file}</li>
+            <div className="panel insight-panel">
+              <h3>Image suggestions</h3>
+              {suggestions.length ? (
+                <ul className="clean-list compact-list">
+                  {suggestions.map((suggestion) => (
+                    <li key={suggestion.url}>
+                      <a href={suggestion.url} target="_blank" rel="noreferrer">
+                        {suggestion.source_name}
+                      </a>
+                      <p>{suggestion.intended_use}</p>
+                    </li>
                   ))}
                 </ul>
-                <a className="button secondary" href={buildDownloadUrl(project.id, latestBuild.id)}>
-                  Download ZIP export
-                </a>
-              </div>
+              ) : (
+                <p className="helper-text">Load licensed image ideas when you want supporting visuals.</p>
+              )}
             </div>
-          ) : (
-            <p className="helper-text">No build generated yet.</p>
-          )}
-        </SectionCard>
+
+            <div className="panel insight-panel build-panel">
+              <div className="row-between">
+                <div>
+                  <div className="panel-kicker">Export</div>
+                  <h3>Generate frontend bundle</h3>
+                </div>
+              </div>
+              <p>Build a responsive static export from the current approved design.</p>
+              <button className="button primary" type="button" disabled={!latestDesign || busyAction === "build"} onClick={handleGenerateBuild}>
+                {busyAction === "build" ? "Building..." : "Generate static site"}
+              </button>
+            </div>
+          </div>
+        </section>
       </div>
     </main>
   );
