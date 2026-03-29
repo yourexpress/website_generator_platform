@@ -20,6 +20,13 @@ export interface UploadedAsset {
   created_at: string;
 }
 
+export interface AssistantMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  created_at: string;
+}
+
 export interface PagePlan {
   slug: string;
   title: string;
@@ -173,6 +180,7 @@ export interface GenerationRun {
 
 export interface ProjectDetail extends ProjectSummary {
   assets: UploadedAsset[];
+  assistant_messages: AssistantMessage[];
   requirement_versions: RequirementVersion[];
   design_versions: DesignVersion[];
   build_versions: BuildVersion[];
@@ -196,4 +204,11 @@ export interface ImageSuggestion {
   licensing_note: string;
   intended_use: string;
   query: string;
+}
+
+export interface AssistantChatResponse {
+  user_message: AssistantMessage;
+  assistant_message: AssistantMessage;
+  requirement_version: RequirementVersion;
+  design_version: DesignVersion;
 }

@@ -67,6 +67,14 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS assistant_messages (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS requirement_versions (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,

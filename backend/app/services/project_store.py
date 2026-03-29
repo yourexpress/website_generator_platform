@@ -69,6 +69,10 @@ def get_project(project_id: str) -> dict[str, Any]:
         project = conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
         if not project:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+        assistant_messages = conn.execute(
+            "SELECT * FROM assistant_messages WHERE project_id = ? ORDER BY created_at ASC",
+            (project_id,),
+        ).fetchall()
         assets = conn.execute(
             "SELECT * FROM uploaded_assets WHERE project_id = ? ORDER BY created_at DESC",
             (project_id,),
@@ -91,6 +95,7 @@ def get_project(project_id: str) -> dict[str, Any]:
         ).fetchall()
     return {
         **dict(project),
+        "assistant_messages": [dict(row) for row in assistant_messages],
         "assets": [dict(row) for row in assets],
         "requirement_versions": [dict(row) for row in requirement_versions],
         "design_versions": [dict(row) for row in design_versions],
@@ -188,6 +193,37 @@ def create_uploaded_asset(
         "storage_path": storage_path,
         "created_at": timestamp,
     }
+
+
+def create_assistant_message(project_id: str, *, role: str, content: str) -> dict[str, Any]:
+    _project_exists(project_id)
+    message_id = _new_id("msg")
+    timestamp = _now()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO assistant_messages (id, project_id, role, content, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (message_id, project_id, role, content, timestamp),
+        )
+    touch_project(project_id)
+    return {
+        "id": message_id,
+        "role": role,
+        "content": content,
+        "created_at": timestamp,
+    }
+
+
+def list_assistant_messages(project_id: str) -> list[dict[str, Any]]:
+    _project_exists(project_id)
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM assistant_messages WHERE project_id = ? ORDER BY created_at ASC",
+            (project_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def get_assets(project_id: str) -> list[dict[str, Any]]:

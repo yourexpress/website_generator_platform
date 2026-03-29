@@ -4,29 +4,23 @@ import {
   approveDesign,
   approveRequirements,
   buildDownloadUrl,
+  chatAssistant,
   generateBuild,
-  generateDesign,
   getImageSuggestions,
   getProject,
   getProviders,
   uploadAssets,
-  refineRequirements,
 } from "../lib/api";
-import { ImageSuggestion, ProjectDetail, ProviderCatalogItem, RequirementInput } from "../lib/types";
+import { DesignPreview } from "../components/DesignPreview";
 import { SectionCard } from "../components/SectionCard";
+import { AssistantMessage, ImageSuggestion, ProjectDetail, ProviderCatalogItem, RequirementInput } from "../lib/types";
 
-const DEFAULT_REQUIREMENT_INPUT: RequirementInput = {
-  prompt: "",
-  business_name: "",
-  business_type: "",
-  site_type: "brochure",
-  target_audience: [],
-  brand_direction: "",
-  required_sections: [],
-  cta_goals: [],
-  reference_notes: "",
-  preferred_page_count: 1,
-  uploaded_asset_ids: [],
+const INTRO_MESSAGE: AssistantMessage = {
+  id: "intro",
+  role: "assistant",
+  content:
+    "Describe the website you want in natural language. After each message, I will refresh the requirement brief and generate a new design preview automatically.",
+  created_at: new Date(0).toISOString(),
 };
 
 export function WorkspacePage() {
@@ -34,8 +28,11 @@ export function WorkspacePage() {
   const [project, setProject] = useState<ProjectDetail | null>(null);
   const [providers, setProviders] = useState<ProviderCatalogItem[]>([]);
   const [suggestions, setSuggestions] = useState<ImageSuggestion[]>([]);
-  const [requirementInput, setRequirementInput] = useState<RequirementInput>(DEFAULT_REQUIREMENT_INPUT);
   const [selectedProvider, setSelectedProvider] = useState<"openai" | "gemini" | "claude" | "deepseek">("openai");
+  const [chatInput, setChatInput] = useState("");
+  const [siteType, setSiteType] = useState<RequirementInput["site_type"]>("brochure");
+  const [preferredPageCount, setPreferredPageCount] = useState(1);
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([]);
   const [busyAction, setBusyAction] = useState("");
   const [error, setError] = useState("");
 
@@ -65,11 +62,18 @@ export function WorkspacePage() {
     if (!project) {
       return;
     }
-    setRequirementInput((current) => ({
-      ...current,
-      business_name: current.business_name || project.name,
-    }));
-  }, [project?.name]);
+    if (!selectedAssetIds.length && project.assets.length) {
+      setSelectedAssetIds(project.assets.map((asset) => asset.id));
+    }
+    const latestRequirement = project.requirement_versions[0];
+    if (latestRequirement) {
+      setSiteType(latestRequirement.source_input.site_type);
+      setPreferredPageCount(latestRequirement.source_input.preferred_page_count);
+      if (latestRequirement.source_input.uploaded_asset_ids.length) {
+        setSelectedAssetIds(latestRequirement.source_input.uploaded_asset_ids);
+      }
+    }
+  }, [project]);
 
   async function withAction<T>(label: string, task: () => Promise<T>) {
     setBusyAction(label);
@@ -97,9 +101,20 @@ export function WorkspacePage() {
     });
   }
 
-  async function handleRefine() {
-    await withAction("requirements", async () => {
-      await refineRequirements(projectId, selectedProvider, selectedProviderConfig?.default_models.requirements, requirementInput);
+  async function handleChatSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const message = chatInput.trim();
+    if (!message) {
+      return;
+    }
+    await withAction("assistant", async () => {
+      await chatAssistant(projectId, selectedProvider, selectedProviderConfig?.default_models.requirements, {
+        message,
+        site_type: siteType,
+        preferred_page_count: preferredPageCount,
+        uploaded_asset_ids: selectedAssetIds,
+      });
+      setChatInput("");
       await refreshProject();
     });
   }
@@ -107,17 +122,6 @@ export function WorkspacePage() {
   async function handleApproveRequirement(id: string) {
     await withAction("approve-requirements", async () => {
       await approveRequirements(projectId, id);
-      await refreshProject();
-    });
-  }
-
-  async function handleGenerateDesign() {
-    const requirementVersionId = project?.requirement_versions[0]?.id;
-    if (!requirementVersionId) {
-      return;
-    }
-    await withAction("design", async () => {
-      await generateDesign(projectId, selectedProvider, selectedProviderConfig?.default_models.design, requirementVersionId);
       await refreshProject();
     });
   }
@@ -159,6 +163,7 @@ export function WorkspacePage() {
   const latestRequirement = project.requirement_versions[0];
   const latestDesign = project.design_versions[0];
   const latestBuild = project.build_versions[0];
+  const conversation = project.assistant_messages.length ? project.assistant_messages : [INTRO_MESSAGE];
 
   return (
     <main className="app-shell workspace-shell">
@@ -190,8 +195,8 @@ export function WorkspacePage() {
       <div className="workspace-grid">
         <SectionCard
           step="Step 1"
-          title="Input Studio"
-          description="Collect project context, uploads, and raw requirements, then polish them into a structured brief."
+          title="AI Briefing"
+          description="Talk to the assistant in natural language. Each new prompt refreshes the requirement brief and regenerates the design preview automatically."
         >
           <div className="panel inset-panel">
             <form className="stack-form" onSubmit={handleUpload}>
@@ -213,43 +218,10 @@ export function WorkspacePage() {
           </div>
 
           <div className="panel inset-panel">
-            <div className="form-grid">
-              <label>
-                Prompt
-                <textarea
-                  value={requirementInput.prompt}
-                  onChange={(event) => setRequirementInput({ ...requirementInput, prompt: event.target.value })}
-                  placeholder="Build a polished brochure website for a design studio with a bold editorial hero and clear proof blocks."
-                />
-              </label>
-              <label>
-                Business name
-                <input
-                  value={requirementInput.business_name || ""}
-                  onChange={(event) => setRequirementInput({ ...requirementInput, business_name: event.target.value })}
-                />
-              </label>
-              <label>
-                Business type
-                <input
-                  value={requirementInput.business_type || ""}
-                  onChange={(event) => setRequirementInput({ ...requirementInput, business_type: event.target.value })}
-                />
-              </label>
-              <label>
-                Brand direction
-                <input
-                  value={requirementInput.brand_direction || ""}
-                  onChange={(event) => setRequirementInput({ ...requirementInput, brand_direction: event.target.value })}
-                  placeholder="Editorial, bright, premium"
-                />
-              </label>
+            <div className="chat-toolbar">
               <label>
                 Site type
-                <select
-                  value={requirementInput.site_type}
-                  onChange={(event) => setRequirementInput({ ...requirementInput, site_type: event.target.value as RequirementInput["site_type"] })}
-                >
+                <select value={siteType} onChange={(event) => setSiteType(event.target.value as RequirementInput["site_type"])}>
                   <option value="brochure">Brochure</option>
                   <option value="landing">Landing</option>
                   <option value="campaign">Campaign</option>
@@ -257,83 +229,29 @@ export function WorkspacePage() {
                 </select>
               </label>
               <label>
-                Preferred page count
+                Page count
                 <input
                   type="number"
                   min={1}
                   max={5}
-                  value={requirementInput.preferred_page_count}
-                  onChange={(event) =>
-                    setRequirementInput({
-                      ...requirementInput,
-                      preferred_page_count: Number(event.target.value) || 1,
-                    })
-                  }
-                />
-              </label>
-              <label>
-                Target audience
-                <input
-                  value={requirementInput.target_audience.join(", ")}
-                  onChange={(event) =>
-                    setRequirementInput({
-                      ...requirementInput,
-                      target_audience: event.target.value.split(",").map((value) => value.trim()).filter(Boolean),
-                    })
-                  }
-                  placeholder="startup founders, marketing teams"
-                />
-              </label>
-              <label>
-                Required sections
-                <input
-                  value={requirementInput.required_sections.join(", ")}
-                  onChange={(event) =>
-                    setRequirementInput({
-                      ...requirementInput,
-                      required_sections: event.target.value.split(",").map((value) => value.trim()).filter(Boolean),
-                    })
-                  }
-                  placeholder="hero, services, case studies, contact"
-                />
-              </label>
-              <label>
-                CTA goals
-                <input
-                  value={requirementInput.cta_goals.join(", ")}
-                  onChange={(event) =>
-                    setRequirementInput({
-                      ...requirementInput,
-                      cta_goals: event.target.value.split(",").map((value) => value.trim()).filter(Boolean),
-                    })
-                  }
-                  placeholder="Book a discovery call"
-                />
-              </label>
-              <label className="full-span">
-                Reference notes
-                <textarea
-                  value={requirementInput.reference_notes || ""}
-                  onChange={(event) => setRequirementInput({ ...requirementInput, reference_notes: event.target.value })}
+                  value={preferredPageCount}
+                  onChange={(event) => setPreferredPageCount(Number(event.target.value) || 1)}
                 />
               </label>
             </div>
 
             <div className="toggle-grid">
               {project.assets.map((asset) => {
-                const selected = requirementInput.uploaded_asset_ids.includes(asset.id);
+                const selected = selectedAssetIds.includes(asset.id);
                 return (
                   <button
                     key={asset.id}
                     className={`toggle-chip ${selected ? "is-active" : ""}`}
                     type="button"
                     onClick={() =>
-                      setRequirementInput((current) => ({
-                        ...current,
-                        uploaded_asset_ids: selected
-                          ? current.uploaded_asset_ids.filter((value) => value !== asset.id)
-                          : [...current.uploaded_asset_ids, asset.id],
-                      }))
+                      setSelectedAssetIds((current) =>
+                        selected ? current.filter((value) => value !== asset.id) : [...current, asset.id],
+                      )
                     }
                   >
                     {asset.filename}
@@ -342,14 +260,28 @@ export function WorkspacePage() {
               })}
             </div>
 
-            <button
-              className="button primary"
-              type="button"
-              disabled={!requirementInput.prompt.trim() || busyAction === "requirements"}
-              onClick={handleRefine}
-            >
-              {busyAction === "requirements" ? "Polishing..." : "Polish requirements"}
-            </button>
+            <div className="chat-thread">
+              {conversation.map((message) => (
+                <article key={message.id} className={`chat-bubble ${message.role}`}>
+                  <div className="panel-kicker">{message.role === "assistant" ? "AI" : "You"}</div>
+                  <p>{message.content}</p>
+                </article>
+              ))}
+            </div>
+
+            <form className="chat-compose" onSubmit={handleChatSubmit}>
+              <label className="full-span">
+                Message
+                <textarea
+                  value={chatInput}
+                  onChange={(event) => setChatInput(event.target.value)}
+                  placeholder="Describe the business, audience, brand feel, structure, and any must-have sections."
+                />
+              </label>
+              <button className="button primary" type="submit" disabled={!chatInput.trim() || busyAction === "assistant"}>
+                {busyAction === "assistant" ? "Generating preview..." : "Send prompt"}
+              </button>
+            </form>
           </div>
 
           {latestRequirement ? (
@@ -371,42 +303,33 @@ export function WorkspacePage() {
                   Version {latestRequirement.version_number} via {latestRequirement.provider} / {latestRequirement.model}
                 </p>
               </div>
+              <div className="panel inset-panel">
+                <h3>Open questions</h3>
+                <ul className="clean-list">
+                  {latestRequirement.brief.open_questions.map((item) => (
+                    <li key={item}>{item}</li>
+                  ))}
+                </ul>
+              </div>
             </div>
           ) : null}
         </SectionCard>
 
         <SectionCard
           step="Step 2"
-          title="Design Studio"
-          description="Transform the approved requirement brief into a structured design spec with sitemap, layout guidance, and component inventory."
+          title="Design Preview"
+          description="The preview refreshes automatically after each prompt. Review the current direction, then approve the design when it is ready for code generation."
         >
-          <div className="row-between">
-            <button className="button primary" type="button" disabled={!latestRequirement || busyAction === "design"} onClick={handleGenerateDesign}>
-              {busyAction === "design" ? "Generating design..." : "Generate design"}
-            </button>
-            <button className="button secondary" type="button" disabled={!latestRequirement || busyAction === "suggestions"} onClick={handleLoadSuggestions}>
-              {busyAction === "suggestions" ? "Loading..." : "Load image suggestions"}
-            </button>
-          </div>
-
           {latestDesign ? (
-            <div className="result-grid">
+            <div className="result-grid preview-grid">
               <div className="panel inset-panel">
                 <div className="row-between">
-                  <h3>Latest design spec</h3>
+                  <h3>Current design direction</h3>
                   <button className="button secondary" onClick={() => handleApproveDesign(latestDesign.id)}>
                     {latestDesign.approved ? "Approved" : "Approve design"}
                   </button>
                 </div>
                 <p>{latestDesign.design.visual_direction.mood}</p>
-                <div className="token-list">
-                  {latestDesign.design.visual_direction.colors.map((color) => (
-                    <span key={color} className="color-token">
-                      <span className="color-dot" style={{ background: color }} />
-                      {color}
-                    </span>
-                  ))}
-                </div>
                 <ul className="clean-list">
                   {latestDesign.design.pages.map((page) => (
                     <li key={page.slug}>
@@ -414,6 +337,15 @@ export function WorkspacePage() {
                     </li>
                   ))}
                 </ul>
+                <div className="row-between preview-actions">
+                  <button className="button secondary" type="button" disabled={busyAction === "suggestions"} onClick={handleLoadSuggestions}>
+                    {busyAction === "suggestions" ? "Loading..." : "Load image suggestions"}
+                  </button>
+                </div>
+              </div>
+
+              <div className="panel inset-panel">
+                <DesignPreview design={latestDesign.design} />
               </div>
 
               <div className="panel inset-panel">
@@ -435,7 +367,9 @@ export function WorkspacePage() {
                 )}
               </div>
             </div>
-          ) : null}
+          ) : (
+            <p className="helper-text">Start the AI conversation above to generate the first design preview.</p>
+          )}
         </SectionCard>
 
         <SectionCard

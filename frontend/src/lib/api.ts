@@ -132,6 +132,26 @@ export async function getImageSuggestions(projectId: string) {
   return request<{ project_id: string; suggestions: ImageSuggestion[] }>(`/api/projects/${projectId}/image-suggestions`);
 }
 
+export async function chatAssistant(
+  projectId: string,
+  provider: string,
+  model: string | undefined,
+  payload: {
+    message: string;
+    site_type: "landing" | "brochure" | "campaign" | "portfolio";
+    preferred_page_count: number;
+    uploaded_asset_ids: string[];
+  },
+) {
+  return request(`/api/projects/${projectId}/assistant/chat`, {
+    method: "POST",
+    body: JSON.stringify({
+      selection: { provider, model },
+      ...payload,
+    }),
+  });
+}
+
 export function buildDownloadUrl(projectId: string, buildId: string) {
   return `${API_BASE_URL}/api/projects/${projectId}/builds/${buildId}/download`;
 }

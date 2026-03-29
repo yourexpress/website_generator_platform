@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 StageName = Literal["requirements", "design", "build"]
 ProviderName = Literal["openai", "gemini", "claude", "deepseek"]
+AssistantRole = Literal["user", "assistant"]
 
 
 class LoginRequest(BaseModel):
@@ -78,6 +79,21 @@ class RequirementInput(BaseModel):
 class RefineRequirementsRequest(BaseModel):
     selection: StageSelection = Field(default_factory=StageSelection)
     input: RequirementInput
+
+
+class AssistantMessage(BaseModel):
+    id: str
+    role: AssistantRole
+    content: str
+    created_at: datetime
+
+
+class AssistantChatRequest(BaseModel):
+    selection: StageSelection = Field(default_factory=StageSelection)
+    message: str = Field(min_length=2, max_length=4000)
+    site_type: Literal["landing", "brochure", "campaign", "portfolio"] = "brochure"
+    preferred_page_count: int = Field(default=1, ge=1, le=5)
+    uploaded_asset_ids: list[str] = Field(default_factory=list)
 
 
 class RequirementBrief(BaseModel):
@@ -224,6 +240,7 @@ class GenerationRunSummary(BaseModel):
 
 class ProjectDetail(ProjectSummary):
     assets: list[UploadedAssetOut] = Field(default_factory=list)
+    assistant_messages: list[AssistantMessage] = Field(default_factory=list)
     requirement_versions: list[RequirementVersionOut] = Field(default_factory=list)
     design_versions: list[DesignVersionOut] = Field(default_factory=list)
     build_versions: list[BuildVersionOut] = Field(default_factory=list)
@@ -258,6 +275,13 @@ class ImageSuggestion(BaseModel):
 class ImageSuggestionsResponse(BaseModel):
     project_id: str
     suggestions: list[ImageSuggestion]
+
+
+class AssistantChatResponse(BaseModel):
+    user_message: AssistantMessage
+    assistant_message: AssistantMessage
+    requirement_version: RequirementVersionOut
+    design_version: DesignVersionOut
 
 
 class BuildDownloadResponse(BaseModel):

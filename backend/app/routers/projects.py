@@ -12,6 +12,9 @@ from fastapi.responses import FileResponse
 from app.auth import AdminSession
 from app.config import settings
 from app.schemas import (
+    AssistantChatRequest,
+    AssistantChatResponse,
+    AssistantMessage,
     ApproveVersionResponse,
     BuildVersionOut,
     DesignSpec,
@@ -25,6 +28,7 @@ from app.schemas import (
     ProviderCatalogResponse,
     RefineRequirementsRequest,
     RequirementBrief,
+    RequirementInput,
     RequirementVersionOut,
     UploadedAssetOut,
 )
@@ -34,6 +38,7 @@ from app.services.project_store import (
     approve_design_version,
     approve_requirement_version,
     complete_generation_run,
+    create_assistant_message,
     create_build_version,
     create_generation_run,
     create_project,
@@ -45,9 +50,12 @@ from app.services.project_store import (
     get_design_version,
     get_project,
     get_requirement_version,
+    list_assistant_messages,
     list_projects,
+    touch_project,
 )
 from app.services.provider_registry import provider_registry
+from app.services.providers import template_engine
 from app.services.storage import save_upload
 
 
@@ -78,6 +86,15 @@ def _asset_out(record: dict[str, Any]) -> UploadedAssetOut:
         content_type=record["content_type"],
         size_bytes=record["size_bytes"],
         storage_path=record["storage_path"],
+        created_at=datetime.fromisoformat(record["created_at"]),
+    )
+
+
+def _assistant_message_out(record: dict[str, Any]) -> AssistantMessage:
+    return AssistantMessage(
+        id=record["id"],
+        role=record["role"],
+        content=record["content"],
         created_at=datetime.fromisoformat(record["created_at"]),
     )
 
@@ -134,6 +151,7 @@ def _project_detail(record: dict[str, Any]) -> ProjectDetail:
     return ProjectDetail(
         **_project_summary(record).model_dump(),
         assets=[_asset_out(item) for item in record["assets"]],
+        assistant_messages=[_assistant_message_out(item) for item in record["assistant_messages"]],
         requirement_versions=[_requirement_out(_normalize_requirement_record(item)) for item in record["requirement_versions"]],
         design_versions=[_design_out(_normalize_design_record(item)) for item in record["design_versions"]],
         build_versions=[_build_out(_normalize_build_record(item)) for item in record["build_versions"]],
@@ -226,6 +244,105 @@ async def upload_assets(project_id: str, files: list[UploadFile] = File(...)) ->
         )
         saved_assets.append(_asset_out(record))
     return saved_assets
+
+
+@router.post("/projects/{project_id}/assistant/chat", response_model=AssistantChatResponse)
+async def chat_with_assistant(project_id: str, payload: AssistantChatRequest) -> AssistantChatResponse:
+    project = get_project(project_id)
+    assets = get_assets(project_id)
+    previous_requirement = _normalize_requirement_record(project["requirement_versions"][0]) if project["requirement_versions"] else None
+    user_message = create_assistant_message(project_id, role="user", content=payload.message)
+    conversation = list_assistant_messages(project_id)
+    user_messages = [item["content"] for item in conversation if item["role"] == "user"]
+    requirement_input = template_engine.build_requirement_input_from_conversation(
+        project_name=project["name"],
+        project_summary=project["summary"],
+        messages=user_messages,
+        site_type=payload.site_type,
+        preferred_page_count=payload.preferred_page_count,
+        uploaded_asset_ids=payload.uploaded_asset_ids,
+        previous_input=(
+            RequirementInput.model_validate(previous_requirement["source_input"])
+            if previous_requirement
+            else None
+        ),
+    )
+
+    selected_assets = [item["filename"] for item in assets if item["id"] in payload.uploaded_asset_ids] or [item["filename"] for item in assets]
+    provider = provider_registry.get(payload.selection.provider)
+
+    requirements_model = payload.selection.model or provider.default_model("requirements")
+    requirements_run = create_generation_run(
+        project_id,
+        "requirements",
+        payload.selection.provider,
+        requirements_model,
+        settings.prompt_template_version,
+    )
+    requirement_result = await provider.refine_requirements(
+        project_name=project["name"],
+        payload=requirement_input,
+        asset_filenames=selected_assets,
+        model=requirements_model,
+    )
+    requirement_record = create_requirement_version(
+        project_id,
+        provider=payload.selection.provider,
+        model=requirements_model,
+        source_input=requirement_input,
+        brief=requirement_result.output,
+    )
+    complete_generation_run(
+        requirements_run["id"],
+        latency_ms=requirement_result.latency_ms,
+        token_usage=requirement_result.token_usage,
+        output_ref_id=requirement_record["id"],
+    )
+
+    design_model = payload.selection.model or provider.default_model("design")
+    design_run = create_generation_run(
+        project_id,
+        "design",
+        payload.selection.provider,
+        design_model,
+        settings.prompt_template_version,
+    )
+    design_result = await provider.generate_design(
+        brief=RequirementBrief.model_validate(requirement_record["brief"]),
+        asset_filenames=selected_assets,
+        model=design_model,
+    )
+    design_record = create_design_version(
+        project_id,
+        requirement_version_id=requirement_record["id"],
+        provider=payload.selection.provider,
+        model=design_model,
+        design=design_result.output,
+    )
+    complete_generation_run(
+        design_run["id"],
+        latency_ms=design_result.latency_ms,
+        token_usage=design_result.token_usage,
+        output_ref_id=design_record["id"],
+    )
+    touch_project(
+        project_id,
+        active_requirement_version_id=requirement_record["id"],
+        active_design_version_id=design_record["id"],
+    )
+
+    assistant_text = template_engine.build_assistant_reply(
+        brief=RequirementBrief.model_validate(requirement_record["brief"]),
+        design=DesignSpec.model_validate(design_record["design"]),
+        message_count=len(user_messages),
+    )
+    assistant_message = create_assistant_message(project_id, role="assistant", content=assistant_text)
+    return AssistantChatResponse(
+        user_message=_assistant_message_out(user_message),
+        assistant_message=_assistant_message_out(assistant_message),
+        requirement_version=_requirement_out(requirement_record),
+        design_version=_design_out(design_record),
+    )
 
 
 @router.post("/projects/{project_id}/requirements/refine", response_model=RequirementVersionOut)

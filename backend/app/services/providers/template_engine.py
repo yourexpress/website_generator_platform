@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from app.schemas import (
+    AssistantMessage,
     AssetReference,
     ComponentSpec,
     DesignPage,
@@ -200,3 +201,53 @@ def make_index_filename(slug: str) -> str:
 
 def infer_image_label(asset_path: str) -> str:
     return Path(asset_path).name
+
+
+def build_requirement_input_from_conversation(
+    *,
+    project_name: str,
+    project_summary: str | None,
+    messages: list[str],
+    site_type: str,
+    preferred_page_count: int,
+    uploaded_asset_ids: list[str],
+    previous_input: RequirementInput | None,
+) -> RequirementInput:
+    trimmed_messages = [message.strip() for message in messages if message.strip()]
+    combined_prompt = "\n\n".join(trimmed_messages)
+    last_message = trimmed_messages[-1] if trimmed_messages else ""
+    summary_seed = project_summary or "business website"
+    previous = previous_input or RequirementInput(
+        prompt=combined_prompt or f"Build a polished website for {project_name}.",
+        business_name=project_name,
+    )
+    return RequirementInput(
+        prompt=combined_prompt or previous.prompt,
+        business_name=previous.business_name or project_name,
+        business_type=previous.business_type or summary_seed,
+        site_type=site_type,  # type: ignore[arg-type]
+        target_audience=previous.target_audience or ["prospective customers", "decision-makers"],
+        brand_direction=previous.brand_direction or "confident, modern, conversion-focused",
+        required_sections=previous.required_sections or ["hero", "offer", "proof", "about", "contact"],
+        cta_goals=previous.cta_goals or ["Start a conversation", "Request a proposal"],
+        reference_notes="\n\n".join(filter(None, [previous.reference_notes, last_message])) or None,
+        preferred_page_count=preferred_page_count,
+        uploaded_asset_ids=uploaded_asset_ids,
+    )
+
+
+def build_assistant_reply(
+    *,
+    brief: RequirementBrief,
+    design: DesignSpec,
+    message_count: int,
+) -> str:
+    focus_page = brief.required_pages[0].title if brief.required_pages else "the homepage"
+    next_question = brief.open_questions[0] if brief.open_questions else "What proof points should the homepage emphasize next?"
+    return (
+        f"I updated the concept after message {message_count}. "
+        f"The current direction is a {brief.project_type} site for {', '.join(brief.target_audience[:2])} "
+        f"with {len(design.pages)} page(s), led by {focus_page}. "
+        f"The preview now reflects a {design.visual_direction.mood.lower()} visual system. "
+        f"Next useful detail: {next_question}"
+    )

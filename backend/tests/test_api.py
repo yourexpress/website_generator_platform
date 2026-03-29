@@ -98,3 +98,36 @@ def test_provider_catalog() -> None:
     assert response.status_code == 200
     names = {item["name"] for item in response.json()["providers"]}
     assert {"openai", "gemini", "claude", "deepseek"} <= names
+
+
+def test_assistant_chat_auto_generates_preview() -> None:
+    client = make_client(Path("."))
+    login(client)
+
+    project = client.post("/api/projects", json={"name": "Bluehaven Labs", "summary": "AI consulting website"})
+    assert project.status_code == 200
+    project_id = project.json()["id"]
+
+    response = client.post(
+        f"/api/projects/{project_id}/assistant/chat",
+        json={
+            "selection": {"provider": "gemini"},
+            "message": "Create a polished brochure website for an AI consultancy focused on healthcare and operations leaders.",
+            "site_type": "brochure",
+            "preferred_page_count": 2,
+            "uploaded_asset_ids": [],
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["user_message"]["role"] == "user"
+    assert body["assistant_message"]["role"] == "assistant"
+    assert body["requirement_version"]["brief"]["project_name"] == "Bluehaven Labs"
+    assert len(body["design_version"]["design"]["pages"]) >= 1
+
+    project_detail = client.get(f"/api/projects/{project_id}")
+    assert project_detail.status_code == 200
+    detail = project_detail.json()
+    assert len(detail["assistant_messages"]) == 2
+    assert len(detail["requirement_versions"]) == 1
+    assert len(detail["design_versions"]) == 1
